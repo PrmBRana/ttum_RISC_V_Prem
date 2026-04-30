@@ -1,40 +1,48 @@
 `default_nettype none
 `timescale 1ns/1ps
 
+// =============================================================================
+// instruction_mem.v
+// DFF RAM for GF180MCU / Tiny Tapeout
+// DEPTH = 64 (256 bytes)
+// =============================================================================
+
 module instruction_mem #(
-    parameter integer DEPTH  = 64,
+    parameter integer DEPTH  = 64,      // Fixed as per your request
     parameter integer ADDR_W = 6
 )(
     input  wire              clk,
-    input  wire              we,
+    input  wire              reset,
+
+    // Write port - Used by UART Bootloader
+    input  wire              we,                    // Write Enable
     input  wire [ADDR_W-1:0] addr,
     input  wire [31:0]       wdata,
+
+    // Read port - Used by CPU for fetching instructions
     input  wire [ADDR_W-1:0] read_word_idx,
     output wire [31:0]       Instruction_out
 );
 
-    localparam [31:0] NOP = 32'h0000_0013;
-
+    // DFF-based RAM (Efficient array of flip-flops)
     reg [31:0] mem [0:DEPTH-1];
 
-    integer i;
-    initial begin
-        for (i = 0; i < DEPTH; i = i + 1)
-            mem[i] = NOP;
-    end
-
-    // Write port
+    // =========================================================
+    // Write Logic (for Bootloader)
+    // =========================================================
     always @(posedge clk) begin
-        if (we)
+        if (we) begin
             mem[addr] <= wdata;
+        end
     end
 
-    // Pure combinational read
-    // Simulation: correct, no latency issues
-    // ASIC antenna: handled by OpenLane config below
+    // =========================================================
+    // Async Read Logic (Instruction Fetch)
+    // =========================================================
     assign Instruction_out = mem[read_word_idx];
 
 endmodule
+
 
 
 

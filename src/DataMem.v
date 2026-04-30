@@ -1,20 +1,32 @@
 `default_nettype none
 `timescale 1ns/1ps
 
-module DataMem (
+// ============================================================
+//  DataMem.v — ASIC-safe Registered Read RAM + MMIO
+//  Optimized for GF180MCU / wafer.space / Tiny Tapeout
+//  Memory: 32 words (128 bytes) recommended
+// ============================================================
+
+module DataMem #(
+    parameter integer DMEM_DEPTH  = 32,
+    parameter integer DMEM_ADDR_W = 5
+)(
     input  wire        clk,
-    input  wire        reset,
+    input  wire        reset,               // synchronous reset (use reset_sync from top)
+
     input  wire [31:0] aluAddress_in,
-    input  wire [7:0]  DataWriteM_in,
+    input  wire [31:0] DataWriteM_in,
+    input  wire [3:0]  byte_en,
     input  wire        memwriteM_in,
+
     output reg  [31:0] DataMem_out,
 
-    // ── UART TX ───────────────────────────────────────────────
+    // UART
     output reg  [7:0]  uart_out_data,
     output reg         uart_tx_start,
     input  wire        uart_tx_busy,
 
-    // ── SPI2 ──────────────────────────────────────────────────
+    // SPI2
     output reg  [7:0]  spi2_tx_data,
     output reg         spi2_start,
     output wire        spi2_pending_out,
@@ -22,12 +34,15 @@ module DataMem (
     input  wire        spi2_busy,
     input  wire        spi2_done,
 
-    // ── GPIO2 → SPI2 CS_N ─────────────────────────────────────
+    // GPIO
     output reg         gpio2_wr_en,
     output reg         gpio2_wdata
 );
 
-    // ── Address decode ────────────────────────────────────────
+    // =========================================================
+    // Address Decode
+    // =========================================================
+    wire sel_ram       = (aluAddress_in[31:8] == 24'h200000);   // 0x2000_0000 ~ 0x2000_007F
     wire sel_uart_tx   = (aluAddress_in == 32'h1000_0000);
     wire sel_uart_txst = (aluAddress_in == 32'h1000_0008);
     wire sel_spi2_tx   = (aluAddress_in == 32'h4000_0000);
@@ -36,99 +51,122 @@ module DataMem (
     wire sel_spi2_rxst = (aluAddress_in == 32'h4000_000C);
     wire sel_gpio2     = (aluAddress_in == 32'h3000_0004);
 
-    // =========================================================
-    // UART TX — single register (no FIFO)
-    // =========================================================
-    reg [7:0] uart_tx_reg;
-    reg       uart_tx_pending;
+    wire [DMEM_ADDR_W-1:0] ram_word_idx = aluAddress_in[DMEM_ADDR_W+1:2];
 
-    // write only when not already pending (one-cycle write guard)
-    wire uart_tx_wr = memwriteM_in && sel_uart_tx && !uart_tx_pending;
+    // =========================================================
+    // On-chip RAM (Registered Read - better timing on 180nm)
+    // =========================================================
+    reg [31:0] dmem [0:DMEM_DEPTH-1];
+    reg [31:0] ram_rdata_reg;
+
+    // Write logic with byte enables
+    always @(posedge clk) begin
+        if (memwriteM_in && sel_ram) begin
+            if (byte_en[0]) dmem[ram_word_idx][ 7: 0] <= DataWriteM_in[ 7: 0];
+            if (byte_en[1]) dmem[ram_word_idx][15: 8] <= DataWriteM_in[15: 8];
+            if (byte_en[2]) dmem[ram_word_idx][23:16] <= DataWriteM_in[23:16];
+            if (byte_en[3]) dmem[ram_word_idx][31:24] <= DataWriteM_in[31:24];
+        end
+    end
+
+    // Registered read (safer for timing)
+    always @(posedge clk) begin
+        if (reset)
+            ram_rdata_reg <= 32'd0;
+        else if (sel_ram)
+            ram_rdata_reg <= dmem[ram_word_idx];
+    end
+
+    // =========================================================
+    // SPI Done rising edge detection
+    // =========================================================
+    reg spi_done_prev;
+    always @(posedge clk) begin
+        if (reset)
+            spi_done_prev <= 1'b0;
+        else
+            spi_done_prev <= spi2_done;
+    end
+    wire spi_done_rise = spi2_done & ~spi_done_prev;
+
+    // =========================================================
+    // UART TX with pending flag
+    // =========================================================
+    reg uart_pending;
 
     always @(posedge clk) begin
         if (reset) begin
-            uart_tx_reg     <= 8'd0;
-            uart_tx_pending <= 1'b0;
-            uart_out_data   <= 8'd0;
-            uart_tx_start   <= 1'b0;
+            uart_out_data  <= 8'd0;
+            uart_tx_start  <= 1'b0;
+            uart_pending   <= 1'b0;
         end else begin
             uart_tx_start <= 1'b0;
 
-            if (uart_tx_wr) begin
-                uart_tx_reg     <= DataWriteM_in;
-                uart_tx_pending <= 1'b1;
+            if (memwriteM_in && sel_uart_tx && !uart_pending) begin
+                uart_out_data <= DataWriteM_in[7:0];
+                uart_tx_start <= 1'b1;
+                uart_pending  <= 1'b1;
             end
 
-            if (uart_tx_pending && !uart_tx_busy) begin
-                uart_out_data   <= uart_tx_reg;
-                uart_tx_start   <= 1'b1;
-                uart_tx_pending <= 1'b0;
-            end
+            if (uart_pending && !uart_tx_busy)
+                uart_pending <= 1'b0;
         end
     end
 
     // =========================================================
-    // SPI2 TX
+    // SPI TX
     // =========================================================
-    reg       spi2_pending;
-    reg [7:0] spi2_tx_buf;
+    reg       spi_pending;
+    reg       start_armed;
+    reg [7:0] spi_buf;
 
-    // write only when not already pending
-    wire spi2_tx_wr = memwriteM_in && sel_spi2_tx && !spi2_pending;
-
-    assign spi2_pending_out = spi2_pending;
+    assign spi2_pending_out = spi_pending;
 
     always @(posedge clk) begin
         if (reset) begin
             spi2_start   <= 1'b0;
-            spi2_tx_data <= 8'd0;
-            spi2_pending <= 1'b0;
-            spi2_tx_buf  <= 8'd0;
+            spi_pending  <= 1'b0;
+            start_armed  <= 1'b0;
+            spi_buf      <= 8'd0;
         end else begin
             spi2_start <= 1'b0;
 
-            if (spi2_tx_wr) begin
-                spi2_tx_buf  <= DataWriteM_in;
-                spi2_pending <= 1'b1;
+            if (memwriteM_in && sel_spi2_tx && !spi_pending && !spi2_busy) begin
+                spi_buf      <= DataWriteM_in[7:0];
+                spi_pending  <= 1'b1;
+                start_armed  <= 1'b1;
             end
 
-            if (spi2_pending && !spi2_busy && !spi2_done) begin
-                spi2_tx_data <= spi2_tx_buf;
+            if (start_armed && !spi2_busy) begin
+                spi2_tx_data <= spi_buf;
                 spi2_start   <= 1'b1;
-                spi2_pending <= 1'b0;
+                start_armed  <= 1'b0;
             end
+
+            if (spi_done_rise)
+                spi_pending <= 1'b0;
         end
     end
 
     // =========================================================
-    // SPI2 RX — single register (depth=1, no CircularBuffer)
+    // SPI RX (read clears valid flag)
     // =========================================================
-    reg [7:0] spi2_rx_reg;
-    reg       spi2_rx_valid;   // 1 = unread byte waiting
-    reg       spi2_done_r;
-
-    wire spi2_done_rise = spi2_done & ~spi2_done_r;
-
-    // read strobe — one cycle when firmware reads the RX address
-    wire spi2_rx_rd = !memwriteM_in && sel_spi2_rx && spi2_rx_valid;
+    reg [7:0] spi_rx;
+    reg       spi_rx_valid;
 
     always @(posedge clk) begin
         if (reset) begin
-            spi2_done_r  <= 1'b0;
-            spi2_rx_reg  <= 8'd0;
-            spi2_rx_valid<= 1'b0;
+            spi_rx       <= 8'd0;
+            spi_rx_valid <= 1'b0;
         end else begin
-            spi2_done_r <= spi2_done;
-
-            // capture incoming byte on rising edge of done
-            if (spi2_done_rise) begin
-                spi2_rx_reg   <= spi2_rx_data;
-                spi2_rx_valid <= 1'b1;
+            if (spi_done_rise) begin
+                spi_rx       <= spi2_rx_data;
+                spi_rx_valid <= 1'b1;
             end
 
-            // clear valid when firmware reads it
-            if (spi2_rx_rd)
-                spi2_rx_valid <= 1'b0;
+            // Clear valid when CPU reads RX data
+            if (!memwriteM_in && sel_spi2_rx)
+                spi_rx_valid <= 1'b0;
         end
     end
 
@@ -138,7 +176,7 @@ module DataMem (
     always @(posedge clk) begin
         if (reset) begin
             gpio2_wr_en <= 1'b0;
-            gpio2_wdata <= 1'b1;   // CS_N idle high
+            gpio2_wdata <= 1'b1;        // default high (CS_N deasserted)
         end else begin
             gpio2_wr_en <= 1'b0;
             if (memwriteM_in && sel_gpio2) begin
@@ -149,21 +187,29 @@ module DataMem (
     end
 
     // =========================================================
-    // READ MUX — combinational
+    // Read Output Mux
     // =========================================================
     always @(*) begin
-        DataMem_out = 32'h0000_0000;
+        DataMem_out = 32'd0;
+
         if (!memwriteM_in) begin
-            if      (sel_uart_txst) DataMem_out = {30'd0, uart_tx_busy, uart_tx_pending};
-            else if (sel_spi2_tx)   DataMem_out = {24'd0, spi2_tx_buf};
-            else if (sel_spi2_txst) DataMem_out = {30'd0, spi2_pending, spi2_busy};
-            else if (sel_spi2_rx)   DataMem_out = {24'd0, spi2_rx_reg};
-            else if (sel_spi2_rxst) DataMem_out = {30'd0, 1'b0, spi2_rx_valid};
-            else if (sel_gpio2)     DataMem_out = {31'd0, gpio2_wdata};
+            if (sel_uart_txst)
+                DataMem_out = {30'd0, uart_tx_busy, uart_pending};
+            else if (sel_spi2_txst)
+                DataMem_out = {30'd0, spi_pending, spi2_busy};
+            else if (sel_spi2_rx)
+                DataMem_out = {24'd0, spi_rx};
+            else if (sel_spi2_rxst)
+                DataMem_out = {31'd0, spi_rx_valid};
+            else if (sel_gpio2)
+                DataMem_out = {31'd0, gpio2_wdata};
+            else if (sel_ram)
+                DataMem_out = ram_rdata_reg;
         end
     end
 
 endmodule
+
 
 
 

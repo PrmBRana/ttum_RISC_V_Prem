@@ -8,45 +8,26 @@ module gpio2_io (
     input  wire wdata2,
     input  wire spi_busy,
     input  wire spi_pending,
-    output wire gpio_out2
+    output reg  gpio_out2
 );
 
-    reg gpio_out_reg;
-    reg deassert_pending;
-
-    wire spi_idle = !spi_busy && !spi_pending;
+    wire spi_active = spi_busy | spi_pending;
 
     always @(posedge clk) begin
         if (reset) begin
-            gpio_out_reg     <= 1'b1;
-            deassert_pending <= 1'b0;
+            gpio_out2 <= 1'b1;        // Default reset state
         end else begin
-
-            // default hold behavior (explicit)
-            if (wr_en2) begin
-                if (wdata2 == 1'b0) begin
-                    gpio_out_reg     <= 1'b0;
-                    deassert_pending <= 1'b0;
-                end else if (spi_idle) begin
-                    gpio_out_reg     <= 1'b1;
-                    deassert_pending <= 1'b0;
-                end else begin
-                    deassert_pending <= 1'b1;
-                end
+            if (spi_active) begin
+                gpio_out2 <= 1'b0;    // SPI active forces GPIO low (e.g. LED indicator)
+            end else if (wr_en2) begin
+                gpio_out2 <= wdata2;  // Normal GPIO write
             end
-
-            // pending release
-            if (deassert_pending && spi_idle) begin
-                gpio_out_reg     <= 1'b1;
-                deassert_pending <= 1'b0;
-            end
-
+            // else: hold previous value (no automatic pull to 1)
         end
     end
 
-    assign gpio_out2 = gpio_out_reg;
-
 endmodule
+
 
 
 
