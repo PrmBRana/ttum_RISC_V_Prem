@@ -39,7 +39,7 @@ project:
     - "spi.v"
     - "gpio.v"
     - "fifo.v"
-    - "Ex_Mux.v"
+    - "EX_Mux.v"
     - "uart0.v"
 
 
