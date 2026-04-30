@@ -16,38 +16,50 @@ module pipeline (
 
     // =========================================================
     // RESET SYNCHRONISER
+    // reset_sync_a — fetch, decode, execute
+    // reset_sync_b — memory, writeback, peripherals
+    // Both are 2-stage synchronised, parallel copies from ff1
+    // to halve fanout on reset_sync net.
     // =========================================================
-    reg reset_ff1, reset_ff2;
+    reg reset_ff1, reset_ff2, reset_ff3;
     always @(posedge clk) begin
         if (reset) begin
             reset_ff1 <= 1'b1;
             reset_ff2 <= 1'b1;
+            reset_ff3 <= 1'b1;
         end else begin
             reset_ff1 <= 1'b0;
             reset_ff2 <= reset_ff1;
+            reset_ff3 <= reset_ff1;
         end
     end
-    wire reset_sync = reset_ff2;
+    wire reset_sync_a = reset_ff2;
+    wire reset_sync_b = reset_ff3;
 
     // ── Pipeline wires ────────────────────────────────────────
-    wire [31:0] PCPLUS4_top, PC_top, PCF, Instruction1_out, INSTRUCTION;
+    wire [31:0] PCPLUS4_top, PC_top, PCF;
+    wire [31:0] Instruction1_out, INSTRUCTION;
     wire [31:0] RD1_top, RD2_top, PCD_top, PCE_top, PCPLUS4D_TOP;
     wire [31:0] RD1E_top, RD2E_top;
     wire [31:0] SrcA_top, outB_top, ScrB_top;
-    wire [31:0] ALUResultE_top, PCPlus4E_top, ALUResultM_top, PCPlus4M_top;
-    wire [31:0] Datamem_top, ALUResultW_top, ReadDataW_top, PCPlus4W_top, ResultW_top;
+    wire [31:0] ALUResultE_top, PCPlus4E_top;
+    wire [31:0] ALUResultM_top, PCPlus4M_top;
+    wire [31:0] Datamem_top, ALUResultW_top;
+    wire [31:0] ReadDataW_top, PCPlus4W_top, ResultW_top;
     wire [31:0] PCTarget_top, ImmExtD_top, ImmExtE_top;
 
     /* verilator lint_off UNUSEDSIGNAL */
     wire [31:0] WriteDataM_top;
     /* verilator lint_on  UNUSEDSIGNAL */
 
-    wire RegWrite_top, ALUSrcD_top, memWriteD_top, jumpD_top, BranchD_top;
+    wire RegWrite_top, ALUSrcD_top, memWriteD_top;
+    wire jumpD_top, BranchD_top, jumpRD_top;
     wire JumpE_top, BranchE_top, zero_top, PCSCR_top;
-    wire jumpRD_top, JumpRE_top;
+    wire JumpRE_top;
     wire RegWriteE_top, MemWriteE_top, ALUSrcE_top;
     wire MemWriteM_top, RegWriteM_top, RegWriteW_top;
     wire StallF_top, StallD_top, FlushD_top, FlushE_top;
+    wire halt_top;
 
     wire [1:0] ResultSrcD_top, ALUtyp_top, ALUTypE_top;
     wire [1:0] ResultSrcE_top, ResultSrcM_top, ResultSrcW_top;
@@ -57,24 +69,24 @@ module pipeline (
     wire [2:0] ImmSrc_top;
     wire [1:0] ALUSrcAD_top, ALUSrcAE_top;
 
-    wire [7:0]  uart_rx_data_shared;
-    wire        uart_rx_ready_shared;
-    wire        uart_tx_busy_shared;
-    wire [7:0]  boot_tx_data;
-    wire        boot_tx_start_raw;
-    wire [7:0]  periph_tx_data;
-    wire        periph_tx_start;
+    // ── UART / boot wires ─────────────────────────────────────
+    wire [7:0] uart_rx_data_shared;
+    wire       uart_rx_ready_shared;
+    wire       uart_tx_busy_shared;
+    wire [7:0] boot_tx_data;
+    wire       boot_tx_start_raw;
+    wire [7:0] periph_tx_data;
+    wire       periph_tx_start;
 
     wire [IMEM_ADDR_W-1:0] mem_addr;
-    wire [31:0] mem_wdata;
-    wire        Write_enable;
-    wire        stall_Pro;
-    wire        halt_top;
+    wire [31:0]            mem_wdata;
+    wire                   Write_enable;
+    wire                   stall_Pro;
 
     // =========================================================
-    // stall_Pro registered — fanout reduction only
-    // Used by halt logic only. boot_done uses stall_Pro directly
-    // (same as doc 18) to preserve boot timing.
+    // stall_Pro registered — fanout reduction
+    // Drives halt logic only.
+    // boot_done uses raw stall_Pro to preserve boot timing.
     // =========================================================
     reg stall_pro_r;
     always @(posedge clk) begin
@@ -83,7 +95,7 @@ module pipeline (
     end
 
     // =========================================================
-    // boot_done_r / boot_done_r2 — identical to doc 18
+    // boot_done pipeline
     // =========================================================
     wire boot_done_comb = ~stall_Pro;
     reg  boot_done_r;
@@ -106,7 +118,10 @@ module pipeline (
     wire uart_rx_ready_boot = uart_rx_ready_shared & ~boot_done_r2;
 
     // =========================================================
-    // HALT LOGIC — two-stage registered (doc 18, uses stall_pro_r)
+    // HALT LOGIC — two-stage registered
+    // halt_detected_r uses FlushD_top directly (combinational)
+    // so a flushed NOP cannot trigger halt.
+    // stall_pro_r clears halt during bootload.
     // =========================================================
     reg halt_detected_r;
     always @(posedge clk) begin
@@ -128,11 +143,8 @@ module pipeline (
 
     // =========================================================
     // pcscr_r — registered copy for stall nets ONLY
-    // PCSCR_top stays combinational for:
-    //   1. PCSelect_MUX  (branch target this cycle)
-    //   2. Hazard_Unit   (flush generation — must stay fast)
-    // pcscr_r used ONLY for StallF_net / StallD_net to cut
-    // antenna on those long nets. Does NOT go to Hazard_Unit.
+    // PCSCR_top: combinational → PCSelect_MUX + Hazard_Unit
+    // pcscr_r:   registered   → StallF_net + StallD_net only
     // =========================================================
     reg pcscr_r;
     always @(posedge clk) begin
@@ -140,8 +152,6 @@ module pipeline (
         else       pcscr_r <= PCSCR_top;
     end
 
-    // StallF/StallD use pcscr_r (antenna fix)
-    // Hazard_Unit generates FlushD/FlushE from PCSCR_top (correct)
     wire StallF_net = pcscr_r ? 1'b0 : (stall_pro_r | StallF_top | halt_final);
     wire StallD_net = pcscr_r ? 1'b0 : (stall_pro_r | StallD_top | halt_final);
 
@@ -149,71 +159,86 @@ module pipeline (
     // FETCH
     // =========================================================
     PC_incre PC (
-        .pc(PCF), .PCPlus4(PCPLUS4_top));
+        .pc     (PCF),
+        .PCPlus4(PCPLUS4_top));
 
     PCSelect_MUX PCSelect_top (
-        .PCScr(PCSCR_top),
+        .PCScr       (PCSCR_top),
         .PCSequential(PCPLUS4_top),
-        .PCBranch(PCTarget_top),
-        .Mux3_PC(PC_top));
+        .PCBranch    (PCTarget_top),
+        .Mux3_PC     (PC_top));
 
     pc_register Register_top (
-        .clk(clk), .reset(reset_sync),
-        .PCF_in(PC_top), .stallF(StallF_net), .PCF_out(PCF));
+        .clk    (clk),
+        .reset  (reset_sync_a),
+        .PCF_in (PC_top),
+        .stallF (StallF_net),
+        .PCF_out(PCF));
 
     // =========================================================
-    // SHARED UART — OVERSAMPLE=16 (matches doc 18, passes sim)
+    // SHARED UART — reset_sync_b
     // =========================================================
     uart_Tx_fixed #(
-        .CLK_FREQ(50_000_000), .BAUD_RATE(115_200), .OVERSAMPLE(16)
+        .CLK_FREQ  (50_000_000),
+        .BAUD_RATE (115_200),
+        .OVERSAMPLE(16)
     ) uart_shared_inst (
-        .clk(clk), .reset(reset_sync),
-        .tx_Start(shared_tx_start), .tx_Data(shared_tx_data),
-        .tx(tx), .tx_busy(uart_tx_busy_shared),
-        .rx(rx), .rx_Data(uart_rx_data_shared),
+        .clk     (clk),
+        .reset   (reset_sync_b),
+        .tx_Start(shared_tx_start),
+        .tx_Data (shared_tx_data),
+        .tx      (tx),
+        .tx_busy (uart_tx_busy_shared),
+        .rx      (rx),
+        .rx_Data (uart_rx_data_shared),
         .rx_ready(uart_rx_ready_shared));
 
     // =========================================================
-    // BOOTLOADER
+    // BOOTLOADER — raw reset
     // =========================================================
     uart_bootloader uart_bootloader (
-        .clk(clk), .reset(reset),
-        .rx_data(uart_rx_data_shared),
-        .rx_valid(uart_rx_ready_boot),
-        .tx_data(boot_tx_data),
-        .tx_start(boot_tx_start_raw),
-        .mem_we(Write_enable),
-        .mem_addr(mem_addr),
+        .clk      (clk),
+        .reset    (reset),
+        .rx_data  (uart_rx_data_shared),
+        .rx_valid (uart_rx_ready_boot),
+        .tx_data  (boot_tx_data),
+        .tx_start (boot_tx_start_raw),
+        .mem_we   (Write_enable),
+        .mem_addr (mem_addr),
         .mem_wdata(mem_wdata),
         .stall_pro(stall_Pro));
 
     // =========================================================
-    // IMEM — combinational read (simulation correct)
-    // Antenna handled by OpenLane config diode insertion
+    // IMEM
     // =========================================================
     wire [IMEM_ADDR_W-1:0] PC_word_idx;
     assign PC_word_idx = PCF[IMEM_ADDR_W+1:2];
 
     instruction_mem #(
-        .DEPTH(64), .ADDR_W(IMEM_ADDR_W)
+        .DEPTH (64),
+        .ADDR_W(IMEM_ADDR_W)
     ) imem_inst (
-        .clk(clk),
-        .we(Write_enable),
-        .addr(mem_addr),
-        .wdata(mem_wdata),
-        .read_word_idx(PC_word_idx),
+        .clk            (clk),
+        .we             (Write_enable),
+        .addr           (mem_addr),
+        .wdata          (mem_wdata),
+        .read_word_idx  (PC_word_idx),
         .Instruction_out(Instruction1_out));
 
     // =========================================================
-    // DECODE
+    // DECODE — reset_sync_a
     // =========================================================
     IF_ID_stage IF_DF_top (
-        .clk(clk), .reset(reset_sync),
-        .stallD(StallD_net), .flushD(FlushD_top),
-        .PC_in(PCF), .PCplus4_in(PCPLUS4_top),
-        .instruction_in(Instruction1_out),
+        .clk            (clk),
+        .reset          (reset_sync_a),
+        .stallD         (StallD_net),
+        .flushD         (FlushD_top),
+        .PC_in          (PCF),
+        .PCplus4_in     (PCPLUS4_top),
+        .instruction_in (Instruction1_out),
         .instruction_out(INSTRUCTION),
-        .PCplus4_out(PCPLUS4D_TOP), .PC_out(PCD_top));
+        .PCplus4_out    (PCPLUS4D_TOP),
+        .PC_out         (PCD_top));
 
     wire [6:0]  INSTR_op   = INSTRUCTION[6:0];
     wire [2:0]  INSTR_f3   = INSTRUCTION[14:12];
@@ -225,49 +250,81 @@ module pipeline (
     wire [4:0]  INSTR_rd   = INSTRUCTION[11:7];
 
     Control control (
-        .Opcode(INSTR_op), .funct3(INSTR_f3), .funct7(INSTR_f7),
-        .imm(INSTR_imm), .halt(halt_top),
-        .RegWriteD(RegWrite_top), .ResultSrcD(ResultSrcD_top),
-        .MemWriteD(memWriteD_top), .jumpD(jumpD_top), .jumpR(jumpRD_top),
-        .BranchD(BranchD_top), .ALUControlD(ALUControlD_top),
-        .ALUSrcD(ALUSrcD_top), .ALUSrcA(ALUSrcAD_top),
-        .ImmSrc(ImmSrc_top), .ALUType(ALUtyp_top));
+        .Opcode     (INSTR_op),
+        .funct3     (INSTR_f3),
+        .funct7     (INSTR_f7),
+        .imm        (INSTR_imm),
+        .halt       (halt_top),
+        .RegWriteD  (RegWrite_top),
+        .ResultSrcD (ResultSrcD_top),
+        .MemWriteD  (memWriteD_top),
+        .jumpD      (jumpD_top),
+        .jumpR      (jumpRD_top),
+        .BranchD    (BranchD_top),
+        .ALUControlD(ALUControlD_top),
+        .ALUSrcD    (ALUSrcD_top),
+        .ALUSrcA    (ALUSrcAD_top),
+        .ImmSrc     (ImmSrc_top),
+        .ALUType    (ALUtyp_top));
 
     Reg_file Reg_file_top (
-        .clk(clk),
-        .rs1_addr(INSTR_rs1), .rs2_addr(INSTR_rs2),
-        .rd_addr(RdW_top), .Regwrite(RegWriteW_top),
+        .clk       (clk),
+        .rs1_addr  (INSTR_rs1),
+        .rs2_addr  (INSTR_rs2),
+        .rd_addr   (RdW_top),
+        .Regwrite  (RegWriteW_top),
         .Write_data(ResultW_top),
-        .Read_data1(RD1_top), .Read_data2(RD2_top));
+        .Read_data1(RD1_top),
+        .Read_data2(RD2_top));
 
     imm imm_top (
-        .ImmSrc(ImmSrc_top), .instruction(INSTR_full),
-        .ImmExt(ImmExtD_top));
+        .ImmSrc     (ImmSrc_top),
+        .instruction(INSTR_full),
+        .ImmExt     (ImmExtD_top));
 
     // =========================================================
-    // EXECUTE
+    // EXECUTE — reset_sync_a
     // =========================================================
     EX_stage ex_stage (
-        .clk(clk), .reset(reset_sync),
-        .flushE(FlushE_top),
-        .RD1D_in(RD1_top), .RD2D_in(RD2_top),
-        .ImmExtD_in(ImmExtD_top), .PCPlus4D_in(PCPLUS4D_TOP),
-        .PC_D_in(PCD_top), .Rs1D_in(INSTR_rs1), .Rs2D_in(INSTR_rs2),
-        .RdD_in(INSTR_rd), .ALUControlD_in(ALUControlD_top),
-        .ALUSrcD_in(ALUSrcD_top), .ALUSrcA_in(ALUSrcAD_top),
-        .RegWriteD_in(RegWrite_top), .ResultSrcD_in(ResultSrcD_top),
-        .MemWriteD_in(memWriteD_top), .BranchD_in(BranchD_top),
-        .JumpD_in(jumpD_top), .JumpR_in(jumpRD_top),
-        .ALUType_in(ALUtyp_top),
-        .RD1E_out(RD1E_top), .RD2E_out(RD2E_top),
-        .ImmExtD_out(ImmExtE_top), .PCPlus4D_out(PCPlus4E_top),
-        .PC_D_out(PCE_top), .Rs1D_out(Rs1E_top), .Rs2D_out(Rs2E_top),
-        .RdD_out(RdE_top), .ALUControlD_out(ALUControlE_top),
-        .ALUSrcD_out(ALUSrcE_top), .ALUSrcA_out(ALUSrcAE_top),
-        .RegWriteD_out(RegWriteE_top), .ResultSrcD_out(ResultSrcE_top),
-        .MemWriteD_out(MemWriteE_top), .BranchD_out(BranchE_top),
-        .JumpD_out(JumpE_top), .JumpR_out(JumpRE_top),
-        .ALUType_out(ALUTypE_top));
+        .clk            (clk),
+        .reset          (reset_sync_a),
+        .flushE         (FlushE_top),
+        .RD1D_in        (RD1_top),
+        .RD2D_in        (RD2_top),
+        .ImmExtD_in     (ImmExtD_top),
+        .PCPlus4D_in    (PCPLUS4D_TOP),
+        .PC_D_in        (PCD_top),
+        .Rs1D_in        (INSTR_rs1),
+        .Rs2D_in        (INSTR_rs2),
+        .RdD_in         (INSTR_rd),
+        .ALUControlD_in (ALUControlD_top),
+        .ALUSrcD_in     (ALUSrcD_top),
+        .ALUSrcA_in     (ALUSrcAD_top),
+        .RegWriteD_in   (RegWrite_top),
+        .ResultSrcD_in  (ResultSrcD_top),
+        .MemWriteD_in   (memWriteD_top),
+        .BranchD_in     (BranchD_top),
+        .JumpD_in       (jumpD_top),
+        .JumpR_in       (jumpRD_top),
+        .ALUType_in     (ALUtyp_top),
+        .RD1E_out       (RD1E_top),
+        .RD2E_out       (RD2E_top),
+        .ImmExtD_out    (ImmExtE_top),
+        .PCPlus4D_out   (PCPlus4E_top),
+        .PC_D_out       (PCE_top),
+        .Rs1D_out       (Rs1E_top),
+        .Rs2D_out       (Rs2E_top),
+        .RdD_out        (RdE_top),
+        .ALUControlD_out(ALUControlE_top),
+        .ALUSrcD_out    (ALUSrcE_top),
+        .ALUSrcA_out    (ALUSrcAE_top),
+        .RegWriteD_out  (RegWriteE_top),
+        .ResultSrcD_out (ResultSrcE_top),
+        .MemWriteD_out  (MemWriteE_top),
+        .BranchD_out    (BranchE_top),
+        .JumpD_out      (JumpE_top),
+        .JumpR_out      (JumpRE_top),
+        .ALUType_out    (ALUTypE_top));
 
     wire [31:0] SrcA_fwd =
         (ForwardAE_top == 2'b10) ? ALUResultM_top :
@@ -294,61 +351,86 @@ module pipeline (
     assign PCSCR_top = (zero_top & BranchE_top) | JumpE_top;
 
     ALU alu (
-        .ScrA(SrcA_top), .ScrB(ScrB_top),
-        .ALUControl(ALUControlE_top), .ALUType(ALUTypE_top),
-        .ALUResult(ALUResultE_top), .Zero(zero_top));
+        .ScrA      (SrcA_top),
+        .ScrB      (ScrB_top),
+        .ALUControl(ALUControlE_top),
+        .ALUType   (ALUTypE_top),
+        .ALUResult (ALUResultE_top),
+        .Zero      (zero_top));
 
     // =========================================================
-    // MEMORY STAGE
+    // MEMORY STAGE — reset_sync_b
     // =========================================================
     MEM_stage mem_stage (
-        .clk(clk), .reset(reset_sync),
-        .ALUResult_in(ALUResultE_top), .WriteData_in(outB_top),
-        .RdM_in(RdE_top), .PCPlus4M_in(PCPlus4E_top),
-        .RegWriteM_in(RegWriteE_top), .ResultSrcM_in(ResultSrcE_top),
-        .MemWriteM_in(MemWriteE_top),
-        .ALUResult_out(ALUResultM_top), .WriteData_out(WriteDataM_top),
-        .RdM_out(RdM_top), .PCPlus4M_out(PCPlus4M_top),
-        .RegWriteM_out(RegWriteM_top), .ResultSrcM_out(ResultSrcM_top),
-        .MemWriteM_out(MemWriteM_top));
+        .clk           (clk),
+        .reset         (reset_sync_b),
+        .ALUResult_in  (ALUResultE_top),
+        .WriteData_in  (outB_top),
+        .RdM_in        (RdE_top),
+        .PCPlus4M_in   (PCPlus4E_top),
+        .RegWriteM_in  (RegWriteE_top),
+        .ResultSrcM_in (ResultSrcE_top),
+        .MemWriteM_in  (MemWriteE_top),
+        .ALUResult_out (ALUResultM_top),
+        .WriteData_out (WriteDataM_top),
+        .RdM_out       (RdM_top),
+        .PCPlus4M_out  (PCPlus4M_top),
+        .RegWriteM_out (RegWriteM_top),
+        .ResultSrcM_out(ResultSrcM_top),
+        .MemWriteM_out (MemWriteM_top));
 
     // =========================================================
-    // WRITEBACK
+    // WRITEBACK — reset_sync_b
     // =========================================================
     WriteBack_stage writeback_stage (
-        .clk(clk), .reset(reset_sync),
-        .ALUResultW_in(ALUResultM_top), .ReadDataW_in(Datamem_top),
-        .RdW_in(RdM_top), .PCPlus4W_in(PCPlus4M_top),
-        .RegWriteW_in(RegWriteM_top), .ResultSrcW_in(ResultSrcM_top),
-        .ALUResultW_out(ALUResultW_top), .ReadDataW_out(ReadDataW_top),
-        .RdW_out(RdW_top), .PCPlus4W_out(PCPlus4W_top),
-        .RegWriteW_out(RegWriteW_top), .ResultSrcW_out(ResultSrcW_top));
+        .clk           (clk),
+        .reset         (reset_sync_b),
+        .ALUResultW_in (ALUResultM_top),
+        .ReadDataW_in  (Datamem_top),
+        .RdW_in        (RdM_top),
+        .PCPlus4W_in   (PCPlus4M_top),
+        .RegWriteW_in  (RegWriteM_top),
+        .ResultSrcW_in (ResultSrcM_top),
+        .ALUResultW_out(ALUResultW_top),
+        .ReadDataW_out (ReadDataW_top),
+        .RdW_out       (RdW_top),
+        .PCPlus4W_out  (PCPlus4W_top),
+        .RegWriteW_out (RegWriteW_top),
+        .ResultSrcW_out(ResultSrcW_top));
 
     Write_back write_back (
-        .ALUResultW_in(ALUResultW_top), .ReadDataW_in(ReadDataW_top),
-        .PCPlus4W_in(PCPlus4W_top), .ResultSrcW_in(ResultSrcW_top),
-        .ResultW(ResultW_top));
+        .ALUResultW_in(ALUResultW_top),
+        .ReadDataW_in (ReadDataW_top),
+        .PCPlus4W_in  (PCPlus4W_top),
+        .ResultSrcW_in(ResultSrcW_top),
+        .ResultW      (ResultW_top));
 
     // =========================================================
-    // HAZARD UNIT
-    // Receives PCSCR_top (combinational) — same as doc 18.
-    // This is correct: Hazard_Unit needs PCSCR_top this cycle
-    // to generate FlushD/FlushE for the same-cycle pipeline flush.
-    // pcscr_r is only for StallF/StallD nets (antenna fix above).
+    // HAZARD UNIT — combinational
+    // PCSCR_top combinational — flush must happen same cycle
     // =========================================================
     Hazard_Unit hazard (
-        .Rs1D(INSTR_rs1), .Rs2D(INSTR_rs2),
-        .Rs1E(Rs1E_top), .Rs2E(Rs2E_top), .RdE(RdE_top),
-        .RegWriteE(RegWriteE_top), .PCSRCE(PCSCR_top),
+        .Rs1D        (INSTR_rs1),
+        .Rs2D        (INSTR_rs2),
+        .Rs1E        (Rs1E_top),
+        .Rs2E        (Rs2E_top),
+        .RdE         (RdE_top),
+        .RegWriteE   (RegWriteE_top),
+        .PCSRCE      (PCSCR_top),
         .ResultSrcE_in(ResultSrcE_top),
-        .RdM(RdM_top), .RdW(RdW_top),
-        .RegWriteM(RegWriteM_top), .RegWriteW(RegWriteW_top),
-        .StallF(StallF_top), .StallD(StallD_top),
-        .FlushD(FlushD_top), .FlushE(FlushE_top),
-        .Forward_AE(ForwardAE_top), .Forward_BE(ForwardBE_top));
+        .RdM         (RdM_top),
+        .RdW         (RdW_top),
+        .RegWriteM   (RegWriteM_top),
+        .RegWriteW   (RegWriteW_top),
+        .StallF      (StallF_top),
+        .StallD      (StallD_top),
+        .FlushD      (FlushD_top),
+        .FlushE      (FlushE_top),
+        .Forward_AE  (ForwardAE_top),
+        .Forward_BE  (ForwardBE_top));
 
     // =========================================================
-    // PERIPHERALS
+    // PERIPHERALS — reset_sync_b
     // =========================================================
     wire        spi2_start_w, spi2_busy_w, spi2_done_w, spi2_pending_w;
     wire [7:0]  spi2_tx_data_w, spi2_rx_data_w;
@@ -356,7 +438,7 @@ module pipeline (
 
     DataMem databus_inst (
         .clk             (clk),
-        .reset           (reset_sync),
+        .reset           (reset_sync_b),
         .aluAddress_in   (ALUResultM_top),
         .DataWriteM_in   (WriteDataM_top[7:0]),
         .memwriteM_in    (MemWriteM_top),
@@ -374,25 +456,35 @@ module pipeline (
         .gpio2_wdata     (gpio2_wdata_w));
 
     spi_master #(
-        .DATA_WIDTH(8), .CPOL(0), .CPHA(0), .CLK_DIV(8)
+        .DATA_WIDTH(8),
+        .CPOL      (0),
+        .CPHA      (0),
+        .CLK_DIV   (8)
     ) spi2_inst (
-        .clk(clk), .reset(reset_sync),
-        .start(spi2_start_w),
+        .clk    (clk),
+        .reset  (reset_sync_b),
+        .start  (spi2_start_w),
         .tx_data(spi2_tx_data_w),
         .rx_data(spi2_rx_data_w),
-        .busy(spi2_busy_w),
-        .done(spi2_done_w),
-        .sclk(spi2_sclk),
-        .mosi(spi2_mosi),
-        .miso(spi2_miso));
+        .busy   (spi2_busy_w),
+        .done   (spi2_done_w),
+        .sclk   (spi2_sclk),
+        .mosi   (spi2_mosi),
+        .miso   (spi2_miso));
 
     gpio2_io gpio2 (
-        .clk(clk), .reset(reset_sync),
-        .wr_en2(gpio2_wr_en_w), .wdata2(gpio2_wdata_w),
-        .spi_busy(spi2_busy_w), .spi_pending(spi2_pending_w),
-        .gpio_out2(spi2_cs_n));
+        .clk        (clk),
+        .reset      (reset_sync_b),
+        .wr_en2     (gpio2_wr_en_w),
+        .wdata2     (gpio2_wdata_w),
+        .spi_busy   (spi2_busy_w),
+        .spi_pending(spi2_pending_w),
+        .gpio_out2  (spi2_cs_n));
 
 endmodule
+
+
+
 
 
 
