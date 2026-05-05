@@ -2,8 +2,8 @@
 `timescale 1ns/1ps
 
 // ============================================================
-//  pipeline — RISC-V 5-stage Optimized for GF180MCU
-//  Clock Gating + Multi-level buffering
+//  pipeline — Final Optimized Version for GF180MCU
+//  Strong Clock Gating + Single Main Clock Domain
 // ============================================================
 
 module pipeline (
@@ -20,20 +20,18 @@ module pipeline (
     output wire spi2_cs_n
 );
 
-    // ====================== CLOCK GATING ======================
+    // ====================== STRONG CLOCK GATING ======================
     (* keep = "true" *) wire clk_gated;
 
-    // Gating when processor is halted
     reg clk_en_r;
     always @(posedge clk) 
         clk_en_r <= ~halt_final;
 
     assign clk_gated = clk & clk_en_r;
 
-    // ====================== RESET ======================
     wire rst = reset;
 
-    localparam IMEM_ADDR_W = 6;   // 64 words
+    localparam IMEM_ADDR_W = 6;
 
     // ====================== PIPELINE WIRES ======================
     wire [31:0] PCPLUS4_top, PC_top, PCF, Instruction1_out, INSTRUCTION;
@@ -191,21 +189,14 @@ module pipeline (
         .BranchD_out(BranchE_top), .JumpD_out(JumpE_top), .JumpR_out(JumpRE_top),
         .ALUType_out(ALUTypE_top));
 
-    wire [31:0] ALUResM_fwdA = ALUResultM_top;
-    wire [31:0] ALUResM_fwdB = ALUResultM_top;
-    wire [31:0] ALUResM_dmem = ALUResultM_top;
-    wire [31:0] ALUResM_wb   = ALUResultM_top;
-    wire [31:0] ResultW_fwdA = ResultW_top;
-    wire [31:0] ResultW_fwdB = ResultW_top;
-
-    wire [31:0] SrcA_fwd = (ForwardAE_top == 2'b10) ? ALUResM_fwdA :
-                           (ForwardAE_top == 2'b01) ? ResultW_fwdA : RD1E_top;
+    wire [31:0] SrcA_fwd = (ForwardAE_top == 2'b10) ? ALUResultM_top :
+                           (ForwardAE_top == 2'b01) ? ResultW_top : RD1E_top;
 
     assign SrcA_top = (ALUSrcAE_top == 2'b10) ? 32'd0 :
                       (ALUSrcAE_top == 2'b01) ? PCE_top : SrcA_fwd;
 
-    assign outB_top = (ForwardBE_top == 2'b10) ? ALUResM_fwdB :
-                      (ForwardBE_top == 2'b01) ? ResultW_fwdB : RD2E_top;
+    assign outB_top = (ForwardBE_top == 2'b10) ? ALUResultM_top :
+                      (ForwardBE_top == 2'b01) ? ResultW_top : RD2E_top;
 
     assign ScrB_top = ALUSrcE_top ? ImmExtE_top : outB_top;
 
@@ -221,7 +212,7 @@ module pipeline (
         .ALUResult(ALUResultE_top), .Zero(zero_top));
 
     // =========================================================
-    // MEMORY STAGE
+    // MEMORY + WRITEBACK + HAZARD + PERIPHERALS
     // =========================================================
     MEM_stage mem_stage(
         .clk(clk_gated), .reset(rst),
@@ -234,12 +225,9 @@ module pipeline (
         .RegWriteM_out(RegWriteM_top), .ResultSrcM_out(ResultSrcM_top),
         .MemWriteM_out(MemWriteM_top));
 
-    // =========================================================
-    // WRITEBACK
-    // =========================================================
     WriteBack_stage writeback_stage(
         .clk(clk_gated), .reset(rst),
-        .ALUResultW_in(ALUResM_wb), .ReadDataW_in(Datamem_top),
+        .ALUResultW_in(ALUResultM_top), .ReadDataW_in(Datamem_top),
         .RdW_in(RdM_top), .PCPlus4W_in(PCPlus4M_top),
         .RegWriteW_in(RegWriteM_top), .ResultSrcW_in(ResultSrcM_top),
         .ALUResultW_out(ALUResultW_top), .ReadDataW_out(ReadDataW_top),
@@ -253,9 +241,6 @@ module pipeline (
         .ResultSrcW_in(ResultSrcW_top),
         .ResultW(ResultW_top));
 
-    // =========================================================
-    // HAZARD UNIT
-    // =========================================================
     Hazard_Unit hazard(
         .Rs1D(INSTR_rs1), .Rs2D(INSTR_rs2),
         .Rs1E(Rs1E_top), .Rs2E(Rs2E_top), .RdE(RdE_top),
@@ -267,9 +252,7 @@ module pipeline (
         .FlushD(FlushD_top), .FlushE(FlushE_top),
         .Forward_AE(ForwardAE_top), .Forward_BE(ForwardBE_top));
 
-    // =========================================================
-    // PERIPHERALS
-    // =========================================================
+    // Peripherals (using gated clock)
     wire        spi2_start_w, spi2_busy_w, spi2_done_w, spi2_pending_w;
     wire [7:0]  spi2_tx_data_w, spi2_rx_data_w;
     wire        gpio1_wr_en_w, gpio1_wdata_w;
@@ -279,7 +262,7 @@ module pipeline (
 
     DataMem databus_inst (
         .clk(clk_gated), .reset(rst),
-        .aluAddress_in(ALUResM_dmem),
+        .aluAddress_in(ALUResultM_top),
         .DataWriteM_in(WriteDataM_top[7:0]),
         .memwriteM_in(MemWriteM_top),
         .DataMem_out(Datamem_top),
@@ -330,6 +313,7 @@ module pipeline (
         .gpio_out2(spi2_cs_n));
 
 endmodule
+
 
 
 

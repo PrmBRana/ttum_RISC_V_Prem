@@ -75,4 +75,4 @@ pinout:
   uio[7]: "spi2_miso"
 
 # Do not change!
-yaml_version: 6
+yaml_version: 4
