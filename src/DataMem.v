@@ -64,10 +64,17 @@ module DataMem (
 
     // =========================================================
     // ADDRESS DECODE — upper 20 bits + 2-bit word offset
-    // Reduces critical path vs full 32-bit compare
+    // Reduces critical path vs full 32-bit compare.
+    // Bits [11:4] and [1:0] are intentionally not used:
+    //   [11:4] sub-4KB offset — all peripherals are 4KB-aligned
+    //   [1:0]  byte lane — peripheral bus is byte-write only
+    // The reduction-AND trick consumes them with zero logic.
     // =========================================================
-    wire [19:0] region  = aluAddress_in[31:12];
-    wire [1:0]  word    = aluAddress_in[3:2];    // word select within region
+    /* verilator lint_off UNUSEDSIGNAL */
+    wire _unused_addr = &{1'b0, aluAddress_in[11:4], aluAddress_in[1:0]};
+    /* verilator lint_on  UNUSEDSIGNAL */
+    wire [19:0] region = aluAddress_in[31:12];
+    wire [1:0]  word   = aluAddress_in[3:2];
 
     wire is_uart  = (region == 20'h10000);
     wire is_gpio  = (region == 20'h30000);
@@ -99,7 +106,7 @@ module DataMem (
     reg [7:0] uart_in_data_r,  uart_in_data_sync;
     reg uart_rx_ready_r,   uart_rx_ready_sync;
 
-    always @(posedge clk or posedge reset) begin
+    always @(posedge clk) begin
         if (reset) begin
             uart_tx_busy_r    <= 1'b0; uart_tx_busy_sync <= 1'b0;
             spi2_busy_r       <= 1'b0; spi2_busy_sync    <= 1'b0;
@@ -127,7 +134,7 @@ module DataMem (
     // SPI2 DONE EDGE DETECT
     // =========================================================
     reg spi2_done_sync_r;
-    always @(posedge clk or posedge reset) begin
+    always @(posedge clk) begin
         if (reset) spi2_done_sync_r <= 1'b0;
         else       spi2_done_sync_r <= spi2_done_sync;
     end
@@ -141,7 +148,7 @@ module DataMem (
 
     wire uart_tx_wr = memwriteM_in & sel_uart_tx & ~uart_tx_pending;
 
-    always @(posedge clk or posedge reset) begin
+    always @(posedge clk) begin
         if (reset) begin
             uart_tx_reg     <= 8'd0;
             uart_tx_pending <= 1'b0;
@@ -167,7 +174,7 @@ module DataMem (
     reg [7:0] uart_rx_reg;
     reg       uart_rx_valid;
 
-    always @(posedge clk or posedge reset) begin
+    always @(posedge clk) begin
         if (reset) begin
             uart_rx_reg   <= 8'd0;
             uart_rx_valid <= 1'b0;
@@ -191,7 +198,7 @@ module DataMem (
 
     assign spi2_pending_out = spi2_pending;
 
-    always @(posedge clk or posedge reset) begin
+    always @(posedge clk) begin
         if (reset) begin
             spi2_start   <= 1'b0;
             spi2_tx_data <= 8'd0;
@@ -217,7 +224,7 @@ module DataMem (
     reg [7:0] spi2_rx_reg;
     reg       spi2_rx_valid;
 
-    always @(posedge clk or posedge reset) begin
+    always @(posedge clk) begin
         if (reset) begin
             spi2_rx_reg   <= 8'd0;
             spi2_rx_valid <= 1'b0;
@@ -234,7 +241,7 @@ module DataMem (
     // =========================================================
     // GPIO1
     // =========================================================
-    always @(posedge clk or posedge reset) begin
+    always @(posedge clk) begin
         if (reset) begin
             gpio1_wr_en <= 1'b0;
             gpio1_wdata <= 1'b1;
@@ -250,7 +257,7 @@ module DataMem (
     // =========================================================
     // GPIO2
     // =========================================================
-    always @(posedge clk or posedge reset) begin
+    always @(posedge clk) begin
         if (reset) begin
             gpio2_wr_en <= 1'b0;
             gpio2_wdata <= 1'b1;
@@ -282,6 +289,7 @@ module DataMem (
     end
 
 endmodule
+
 
 
 

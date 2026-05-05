@@ -83,7 +83,7 @@ module tb();
     end
 
     // 50 MHz clock
-    always #20 clk = ~clk;
+    always #10 clk = ~clk;
 
 `ifdef GL_TEST
     wire VPWR = 1'b1;
