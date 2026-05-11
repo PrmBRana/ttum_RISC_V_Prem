@@ -143,18 +143,21 @@ module pipeline (
         .rx_Data(uart_rx_data_boot), .rx_ready(uart_rx_ready_boot));
 
     uart_bootloader uart_bootloader_inst (
-        .clk(clk), .reset(reset),
-        .rx_data(uart_rx_data_boot), .rx_valid(uart_rx_ready_boot),
-        .tx_data(boot_tx_data),      .tx_start(boot_tx_start),
+        .clk(clk), 
+        .reset(reset),
+        .rx_data(uart_rx_data_boot), 
+        .rx_valid(uart_rx_ready_boot),
+        .tx_data(boot_tx_data),      
+        .tx_start(boot_tx_start),
         .mem_we(Write_enable),
         .mem_addr(mem_addr),
         .mem_wdata(mem_wdata),
         .stall_pro(stall_Pro));
 
-    mem1KB_32bit #(.DEPTH(64), .ADDR_W(IMEM_ADDR_W)) imem (
-        .clk(clk), .reset(reset),
+    mem1KB_32bit #(.DEPTH(64), .ADDR_W(6)) imem (
+        .clk(clk), 
         .we(Write_enable),
-        .addr(mem_addr[IMEM_ADDR_W-1:0]),
+        .addr(mem_addr[5:0]),
         .wdata(mem_wdata),
         .read_Address(PCF),
         .Instruction_out(Instruction1_out));
@@ -163,12 +166,16 @@ module pipeline (
     // DECODE
     // =========================================================
     IF_ID_stage IF_DF_top (
-        .clk(clk), .reset(reset),
-        .stallD(StallD_net), .flushD(FlushD_top),
-        .PC_in(PCF), .PCplus4_in(PCPLUS4_top),
+        .clk(clk), 
+        .reset(reset),
+        .stallD(StallD_net), 
+        .flushD(FlushD_top),
+        .PC_in(PCF), 
+        .PCplus4_in(PCPLUS4_top),
         .instruction_in(Instruction1_out),
         .instruction_out(INSTRUCTION),
-        .PCplus4_out(PCPLUS4D_TOP), .PC_out(PCD_top));
+        .PCplus4_out(PCPLUS4D_TOP), 
+        .PC_out(PCD_top));
 
     wire [6:0]  INSTR_op   = INSTRUCTION[6:0];
     wire [2:0]  INSTR_f3   = INSTRUCTION[14:12];

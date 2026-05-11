@@ -1,19 +1,5 @@
 `default_nettype none
 
-// ============================================================
-//  Reg_file — 32×32 register file
-//
-//  No reset port: x0..x31 start as 0 via Verilog initial values
-//  in simulation (reg default = 0). RISC-V programs are responsible
-//  for initialising any register they use before reading it.
-//  Removing reset avoids a 32×32 reset fanout which is expensive
-//  on ASIC and unnecessary for correctness.
-//
-//  Write-first forwarding: if WB is writing the same register
-//  being read in ID this cycle, the new value is forwarded
-//  combinatorially, avoiding a 1-cycle stale-read hazard.
-// ============================================================
-
 module Reg_file (
     input  wire        clk,
     input  wire [4:0]  rs1_addr,
@@ -27,23 +13,25 @@ module Reg_file (
 
     reg [31:0] rf [0:31];
 
-    // ── Write (ignore x0) ─────────────────────────────────────
+    // Write (x0 is hardwired, never written)
     always @(posedge clk) begin
         if (Regwrite && rd_addr != 5'd0)
             rf[rd_addr] <= Write_data;
     end
 
-    // ── Read with write-first forwarding ──────────────────────
-    wire [31:0] raw1 = (rs1_addr == 5'd0) ? 32'd0 : rf[rs1_addr];
-    wire [31:0] raw2 = (rs2_addr == 5'd0) ? 32'd0 : rf[rs2_addr];
+    // Read with write-forwarding
+    assign Read_data1 = (rs1_addr == 5'd0) ? 32'd0 :
+                        (Regwrite && rd_addr == rs1_addr && rd_addr != 5'd0) ? Write_data :
+                        rf[rs1_addr];
 
-    assign Read_data1 = (Regwrite && rd_addr != 5'd0 && rd_addr == rs1_addr)
-                        ? Write_data : raw1;
-    assign Read_data2 = (Regwrite && rd_addr != 5'd0 && rd_addr == rs2_addr)
-                        ? Write_data : raw2;
+    assign Read_data2 = (rs2_addr == 5'd0) ? 32'd0 :
+                        (Regwrite && rd_addr == rs2_addr && rd_addr != 5'd0) ? Write_data :
+                        rf[rs2_addr];
 
 endmodule
 
 `default_nettype wire
+
+
 
 

@@ -1,63 +1,70 @@
 `default_nettype none
 
 module tt_um_prem_pipeline_test (
-    input  wire [7:0] ui_in,
-    output wire [7:0] uo_out,
-    input  wire [7:0] uio_in,
-    output wire [7:0] uio_out,
-    output wire [7:0] uio_oe,
+    input  wire [7:0] ui_in,     // Dedicated inputs
+    output wire [7:0] uo_out,    // Dedicated outputs
+    input  wire [7:0] uio_in,    // IOs: Input path
+    output wire [7:0] uio_out,   // IOs: Output path
+    output wire [7:0] uio_oe,    // IOs: Output enable (1=output)
     input  wire       ena,
     input  wire       clk,
     input  wire       rst_n
 );
 
+    // =========================================================
+    // Unused signals suppression (Verilator + synthesis clean)
+    // =========================================================
     /* verilator lint_off UNUSEDSIGNAL */
-    wire _unused = &{1'b0, ui_in[7:5], ui_in[2:0], uio_in[6:1], ena};
-    /* verilator lint_on  UNUSEDSIGNAL */
+    wire _unused = &{
+        1'b0,
+        ui_in[7:5],     // unused input bits
+        ui_in[2:0],     // unused input bits
+        uio_in[6:0],    // all except [7] which is SPI2 MISO
+        ena             // Tiny Tapeout power enable (always 1)
+    };
+    /* verilator lint_on UNUSEDSIGNAL */
 
     wire reset = ~rst_n;
 
-    // ── UART ─────────────────────────────────────────────────
-    wire uart1_rx = ui_in[3];   // ui[3]  bootloader RX
-    wire uart2_rx = ui_in[4];   // ui[4]  peripheral RX
-    wire uart1_tx;              // uo[0]  bootloader TX
-    wire uart2_tx;              // uo[1]  peripheral TX
+    // ── UART signals ─────────────────────────────────────
+    wire uart1_rx = ui_in[3];   // Bootloader RX
+    wire uart2_rx = ui_in[4];   // Peripheral UART RX
+    wire uart1_tx;
+    wire uart2_tx;
 
-    // ── SPI2 ─────────────────────────────────────────────────
-    wire spi2_mosi_w;           // uio[2] output
-    wire spi2_sclk_w;           // uio[3] output
-    wire spi2_miso_w = uio_in[7]; // uio[7] input
+    // ── SPI2 signals ─────────────────────────────────────
+    wire spi2_miso_w = uio_in[7];
 
-    // ── GPIO chip selects ─────────────────────────────────────
-    wire spi1_cs_n_w;           // uio[0] SPI1 CS (gpio1)
-    wire spi2_cs_n_w;           // uio[4] SPI2 CS (gpio2)
+    // ── GPIO signals ─────────────────────────────────────
+    wire spi1_cs_n_w;
+    wire spi2_cs_n_w;
+    wire spi2_mosi_w;
+    wire spi2_sclk_w;
 
-    // ── Output assignments ────────────────────────────────────
-    assign uo_out[0]   = uart1_tx;
-    assign uo_out[1]   = uart2_tx;
-    assign uo_out[7:2] = 6'b000000;
+    // ── Output assignments ───────────────────────────────
+    assign uo_out[0]   = uart1_tx;      // Bootloader TX
+    assign uo_out[1]   = uart2_tx;      // Peripheral TX
+    assign uo_out[7:2] = 6'b000000;     // unused
 
-    // uio_out: driven pins only; unused set to 0
-    assign uio_out[0] = spi1_cs_n_w;   // uio[0] gpio1 / SPI1 CS
+    // uio_out
+    assign uio_out[0] = spi1_cs_n_w;    // SPI1 CS_N
     assign uio_out[1] = 1'b0;
-    assign uio_out[2] = spi2_mosi_w;   // uio[2] SPI2 MOSI
-    assign uio_out[3] = spi2_sclk_w;   // uio[3] SPI2 SCLK
-    assign uio_out[4] = spi2_cs_n_w;   // uio[4] SPI2 CS
-    assign uio_out[5] = 1'b0;
-    assign uio_out[6] = 1'b0;
-    assign uio_out[7] = 1'b0;          // uio[7] is SPI MISO input
+    assign uio_out[2] = spi2_mosi_w;    // SPI2 MOSI
+    assign uio_out[3] = spi2_sclk_w;    // SPI2 SCLK
+    assign uio_out[4] = spi2_cs_n_w;    // SPI2 CS_N
+    assign uio_out[7:5] = 3'b000;
 
-    // uio_oe: 1 = output, 0 = input
-    assign uio_oe[0] = 1'b1;   // spi1_cs_n  output
-    assign uio_oe[1] = 1'b0;   // unused
-    assign uio_oe[2] = 1'b1;   // spi2_mosi  output
-    assign uio_oe[3] = 1'b1;   // spi2_sclk  output
-    assign uio_oe[4] = 1'b1;   // spi2_cs_n  output
-    assign uio_oe[5] = 1'b0;   // unused
-    assign uio_oe[6] = 1'b0;   // unused
-    assign uio_oe[7] = 1'b0;   // spi2_miso  input
+    // uio_oe (1 = output)
+    assign uio_oe[0] = 1'b1;   // SPI1 CS_N
+    assign uio_oe[1] = 1'b0;
+    assign uio_oe[2] = 1'b1;   // SPI2 MOSI
+    assign uio_oe[3] = 1'b1;   // SPI2 SCLK
+    assign uio_oe[4] = 1'b1;   // SPI2 CS_N
+    assign uio_oe[7:5] = 3'b000;
 
-    // ── pipeline instantiation ────────────────────────────────
+    // =========================================================
+    // Core instantiation
+    // =========================================================
     pipeline Top_inst (
         .clk          (clk),
         .reset        (reset),
@@ -70,20 +77,20 @@ module tt_um_prem_pipeline_test (
         .UART_tx      (uart2_tx),
         .UART_rx_line (uart2_rx),
 
-        // SPI2 — use pipeline's exact port names
+        // SPI2
         .spi2_sclk    (spi2_sclk_w),
         .spi2_mosi    (spi2_mosi_w),
         .spi2_miso    (spi2_miso_w),
         .spi2_cs_n    (spi2_cs_n_w),
 
-        // SPI1 CS (GPIO1-driven)
+        // SPI1 CS (from GPIO1)
         .spi1_cs_n    (spi1_cs_n_w)
     );
 
 endmodule
 
-
 `default_nettype wire
+
 
 
 

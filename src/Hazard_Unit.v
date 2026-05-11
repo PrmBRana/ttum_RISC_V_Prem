@@ -3,17 +3,7 @@
 // ============================================================
 //  Hazard_Unit — stall, flush, and forwarding control
 //
-//  Forwarding paths:
-//    EX/MEM → EX  (Forward = 2'b10)  RegWriteM + RdM
-//    MEM/WB → EX  (Forward = 2'b01)  RegWriteW + RdW
-//
-//  RegWriteE is on the port for interface symmetry with
-//  EX_stage outputs but is NOT used in forwarding logic.
-//  There is no EX→EX forwarding path in a standard 5-stage
-//  pipeline: the ALU result from the current EX instruction
-//  is not yet available when the next instruction enters EX.
-//  It is captured one cycle later in the EX/MEM register
-//  (RegWriteM). This is architecturally correct.
+//  Fixed: Branch/Jump flush priority logic (was inverted).
 // ============================================================
 module Hazard_Unit (
     input  wire [4:0]  Rs1D,
@@ -21,8 +11,6 @@ module Hazard_Unit (
     input  wire [4:0]  Rs1E,
     input  wire [4:0]  Rs2E,
     input  wire [4:0]  RdE,
-    // RegWriteE: port kept for symmetry; EX→EX forwarding
-    // does not exist — see header comment above.
     /* verilator lint_off UNUSEDSIGNAL */
     input  wire        RegWriteE,
     /* verilator lint_on UNUSEDSIGNAL */
@@ -62,8 +50,10 @@ module Hazard_Unit (
 
     // ── Stall / flush control ─────────────────────────────────
     always @(*) begin
-        StallF = 1'b0; StallD = 1'b0;
-        FlushD = 1'b0; FlushE = 1'b0;
+        StallF = 1'b0; 
+        StallD = 1'b0;
+        FlushD = 1'b0; 
+        FlushE = 1'b0;
 
         if (lw_stall) begin
             StallF = 1'b1;
@@ -71,14 +61,19 @@ module Hazard_Unit (
             FlushE = 1'b1;
         end
 
-        // Branch/jump taken overrides stall — PC must update now
+        // Branch/jump taken: highest priority (flush older instructions)
         if (PCSRCE) begin
-            FlushD = 1'b1; FlushE = 1'b1;
-            StallF = 1'b0; StallD = 1'b0;
+            FlushD = 1'b1;
+            FlushE = 1'b1;
+            // Do NOT stall when we are taking a branch/jump
+            StallF = 1'b0;
+            StallD = 1'b0;
         end
     end
+
 endmodule
 
 `default_nettype wire
+
 
 

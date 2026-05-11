@@ -1,22 +1,7 @@
 `default_nettype none
 `timescale 1ns/1ps
 
-// ============================================================
-//  tb.v — cocotb testbench wrapper
-//
-//  Signal naming rule:
-//  test.py accesses signals as dut.<name> where dut = tb instance.
-//  So every wire that test.py touches MUST be declared at this
-//  level with exactly the name test.py uses.
-//
-//  test.py uses:
-//    dut.clk, dut.rst_n                     → declared here
-//    dut.rx, dut.UART_rx_line               → declared here
-//    dut.tx, dut.UART_tx                    → declared here
-//    dut.spi2_miso                          → declared here (input)
-//    dut.spi2_mosi, dut.spi2_sclk          → declared here (output)
-//    dut.spi2_cs_n                          → declared here (output)
-// ============================================================
+
 
 module tb();
 
