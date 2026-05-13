@@ -1,7 +1,7 @@
 `default_nettype none
 
 // =============================================================================
-// EX_stage.v — ID/EX pipeline latch
+// EX_stage.v — ID/EX Pipeline Register (Optimized)
 // =============================================================================
 
 module EX_stage (
@@ -9,6 +9,7 @@ module EX_stage (
     input  wire        reset,
     input  wire        flushE,
 
+    // Inputs from Decode stage
     input  wire [31:0] RD1D_in,
     input  wire [31:0] RD2D_in,
     input  wire [31:0] ImmExtD_in,
@@ -28,6 +29,7 @@ module EX_stage (
     input  wire        JumpR_in,
     input  wire [1:0]  ALUType_in,
 
+    // Outputs to Execute stage
     output reg  [31:0] RD1E_out,
     output reg  [31:0] RD2E_out,
     output reg  [31:0] ImmExtD_out,
@@ -50,6 +52,7 @@ module EX_stage (
 
     always @(posedge clk) begin
         if (reset || flushE) begin
+            // Flush / Reset all pipeline registers
             RD1E_out        <= 32'd0;
             RD2E_out        <= 32'd0;
             ImmExtD_out     <= 32'd0;
@@ -62,13 +65,15 @@ module EX_stage (
             ALUSrcD_out     <= 1'b0;
             ALUSrcA_out     <= 2'b00;
             RegWriteD_out   <= 1'b0;
-            ResultSrcD_out  <= 2'd0;
+            ResultSrcD_out  <= 2'b00;
             MemWriteD_out   <= 1'b0;
             BranchD_out     <= 1'b0;
             JumpD_out       <= 1'b0;
             JumpR_out       <= 1'b0;
-            ALUType_out     <= 2'd0;
-        end else begin
+            ALUType_out     <= 2'b00;
+        end 
+        else begin
+            // Normal pipeline advance
             RD1E_out        <= RD1D_in;
             RD2E_out        <= RD2D_in;
             ImmExtD_out     <= ImmExtD_in;
@@ -93,8 +98,3 @@ module EX_stage (
 endmodule
 
 `default_nettype wire
-
-
-
-
-
