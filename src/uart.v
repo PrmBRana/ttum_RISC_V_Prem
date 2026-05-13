@@ -4,9 +4,9 @@
 //  uart_Tx_fixed — Shared UART (TX + RX, oversampled x16)
 // ============================================================
 module uart_Tx_fixed #(
-    parameter CLK_FREQ   = 50_000_000,
+    parameter CLK_FREQ   = 33_333_333, // 33.333333 MHz for 115200 baud with 4x oversampling
     parameter BAUD_RATE  = 115_200,
-    parameter OVERSAMPLE = 4
+    parameter OVERSAMPLE = 8
 )(
     input  wire       clk,
     input  wire       reset,
