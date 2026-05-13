@@ -14,12 +14,3 @@ module pc_register (
 endmodule
 
 `default_nettype wire
-
-
-
-
-
-
-
-
-

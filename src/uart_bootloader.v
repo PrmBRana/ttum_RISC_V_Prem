@@ -27,7 +27,7 @@ module uart_bootloader (
     output reg  [7:0]  tx_data,
     output reg         tx_start,
     output reg         mem_we,
-    output reg  [7:0]  mem_addr,
+    output reg  [5:0]  mem_addr,
     output reg  [31:0] mem_wdata,
     output reg         stall_pro
 );
@@ -158,6 +158,3 @@ module uart_bootloader (
 endmodule
 
 `default_nettype wire
-
-
-

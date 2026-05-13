@@ -1,6 +1,6 @@
 `default_nettype none
 
-module mem1KB_32bit #(
+module instruction_mem #(
     parameter DEPTH  = 64,
     parameter ADDR_W = 6
 )(
@@ -35,6 +35,4 @@ module mem1KB_32bit #(
 endmodule
 
 `default_nettype wire
-
-
 
