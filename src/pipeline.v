@@ -158,7 +158,7 @@ module pipeline (
         .PCF_in(PC_top), .stallF(StallF_net), .PCF_out(PCF));
 
     uart_Tx_fixed #(
-        .CLK_FREQ(40_000_000), .BAUD_RATE(115_200), .OVERSAMPLE(8)
+        .CLK_FREQ(50_000_000), .BAUD_RATE(115_200), .OVERSAMPLE(8)
     ) uart_shared_inst (
         .clk(clk), .reset(reset_sync_periph),
         .tx_Start(shared_tx_start), .tx_Data(shared_tx_data),
