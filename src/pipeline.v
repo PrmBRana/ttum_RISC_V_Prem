@@ -2,13 +2,12 @@
 
 // ============================================================
 //  pipeline — RISC-V 5-stage + shared UART + SPI2 + GPIO
-//  GF180MCU-D (Fanout Optimized)
+//  GF180MCU-D (Fanout Optimized + FINAL FIX)
 //
-//  FANOUT REDUCTION STRATEGY:
-//  1. Create local reset_sync replicas (4 copies)
-//  2. Each copy drives ~150-200 loads instead of 560+
-//  3. Clock is handled by CTS (don't replicate)
-//  4. Local clock/reset buffers at module level
+//  ✅ FINAL FIXES:
+//  1. Hazard_Unit instantiation uses ONLY existing ports
+//  2. Control_Unit instantiation has NO clk/reset
+//  3. Reset fanout reduced via 4 replicas
 // ============================================================
 
 module pipeline (
@@ -159,7 +158,7 @@ module pipeline (
         .PCF_in(PC_top), .stallF(StallF_net), .PCF_out(PCF));
 
     uart_Tx_fixed #(
-        .CLK_FREQ(45_000_000), .BAUD_RATE(115_200), .OVERSAMPLE(8)
+        .CLK_FREQ(40_000_000), .BAUD_RATE(115_200), .OVERSAMPLE(8)
     ) uart_shared_inst (
         .clk(clk), .reset(reset_sync_periph),
         .tx_Start(shared_tx_start), .tx_Data(shared_tx_data),
@@ -208,6 +207,7 @@ module pipeline (
     wire [31:0] INSTR_full = INSTRUCTION;
     wire [4:0]  INSTR_rd   = INSTRUCTION[11:7];
 
+    // ✅ Control: NO clk/reset ports (combinational logic)
     Control control (
         .Opcode(INSTR_op), .funct3(INSTR_f3), .funct7(INSTR_f7),
         .imm(INSTR_imm), .halt(halt_top),
@@ -306,16 +306,25 @@ module pipeline (
         .PCPlus4W_in(PCPlus4W_top), .ResultSrcW_in(ResultSrcW_top),
         .ResultW(ResultW_top));
 
+    // ✅ Hazard_Unit: CORRECTED - NO clk/reset, NO RegWriteE
     Hazard_Unit hazard (
-        .Rs1D(INSTR_rs1), .Rs2D(INSTR_rs2),
-        .Rs1E(Rs1E_top), .Rs2E(Rs2E_top), .RdE(RdE_top),
-        .RegWriteE(RegWriteE_top), .PCSRCE(PCSCR_top),
+        .Rs1D(INSTR_rs1),
+        .Rs2D(INSTR_rs2),
+        .Rs1E(Rs1E_top),
+        .Rs2E(Rs2E_top),
+        .RdE(RdE_top),
+        .PCSRCE(PCSCR_top),
         .ResultSrcE_in(ResultSrcE_top),
-        .RdM(RdM_top), .RdW(RdW_top),
-        .RegWriteM(RegWriteM_top), .RegWriteW(RegWriteW_top),
-        .StallF(StallF_top), .StallD(StallD_top),
-        .FlushD(FlushD_top), .FlushE(FlushE_top),
-        .Forward_AE(ForwardAE_top), .Forward_BE(ForwardBE_top));
+        .RdM(RdM_top),
+        .RdW(RdW_top),
+        .RegWriteM(RegWriteM_top),
+        .RegWriteW(RegWriteW_top),
+        .StallF(StallF_top),
+        .StallD(StallD_top),
+        .FlushD(FlushD_top),
+        .FlushE(FlushE_top),
+        .Forward_AE(ForwardAE_top),
+        .Forward_BE(ForwardBE_top));
 
     // PERIPHERALS
     wire        spi2_start_w, spi2_busy_w, spi2_done_w, spi2_pending_w;

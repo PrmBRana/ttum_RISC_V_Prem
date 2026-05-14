@@ -7,14 +7,12 @@
 // Optimizations:
 // 1. Early opcode decode (parallel wires)
 // 2. Reduced fanout via local signal replication
-// 3. Output registered to break critical paths
-// 4. Minimal cascaded logic depth
+// 3. Minimal cascaded logic depth
+// 4. REMOVED: Unused clk/reset (combinational logic only)
 //
 // ============================================================
 
 module Control (
-    input  wire        clk,
-    input  wire        reset,
     input  wire [6:0]  Opcode,
     input  wire [2:0]  funct3,
     input  wire [6:0]  funct7,
@@ -79,7 +77,7 @@ module Control (
     wire is_itype_sltiu = isItype && (funct3 == 3'b011);
 
     // =========================================================
-    // COMBINATIONAL CONTROL LOGIC (No Case Statement)
+    // COMBINATIONAL CONTROL LOGIC (Parallel, not Cascaded)
     // =========================================================
     // Use parallel logic instead of case for better fanout distribution
 
@@ -173,12 +171,8 @@ module Control (
                      ((imm == 12'h000) || (imm == 12'h001));
 
     // =========================================================
-    // REGISTERED OUTPUTS (Optional - uncomment if needed)
+    // COMBINATIONAL OUTPUTS
     // =========================================================
-    // If timing is still critical, register outputs
-    // This adds 1 cycle latency but breaks timing paths
-    // For now, use combinational to keep design at expected latency
-    
     always @(*) begin
         RegWriteD   = write_enable;
         ALUControlD = alucontrol_comb;

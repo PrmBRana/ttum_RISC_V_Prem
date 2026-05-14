@@ -6,21 +6,18 @@
 // 
 // Optimizations:
 // 1. Parallel forwarding logic (no cascaded comparisons)
-// 2. Registered outputs to break critical paths
-// 3. Reduced intermediate signal fanout
-// 4. Early exit conditions to minimize logic depth
+// 2. Reduced intermediate signal fanout
+// 3. Early exit conditions to minimize logic depth
+// 4. REMOVED: Unused clk/reset ports (combinational logic only)
 //
 // ============================================================
 
 module Hazard_Unit (
-    input  wire        clk,
-    input  wire        reset,
     input  wire [4:0]  Rs1D,
     input  wire [4:0]  Rs2D,
     input  wire [4:0]  Rs1E,
     input  wire [4:0]  Rs2E,
     input  wire [4:0]  RdE,
-    input  wire        RegWriteE,
     input  wire [1:0]  ResultSrcE_in,
     input  wire [4:0]  RdM,
     input  wire        RegWriteM,
@@ -84,15 +81,10 @@ module Hazard_Unit (
     wire rs2_match_e = (Rs2D == RdE);
     
     // Load use condition: both source match valid + load result
-    wire load_hazard = (ResultSrcE_in == 2'b01) &&     // Is load
-                       rde_valid &&                      // RdE not x0
-                       (rs1_match_e || rs2_match_e);    // Source match
-    
-    // Alternative: Early termination
-    wire no_operand_match = ~(rs1_match_e | rs2_match_e);
-    wire lw_stall = (ResultSrcE_in == 2'b01) && 
-                    rde_valid && 
-                    ~no_operand_match;
+    // ✅ Using lw_stall directly (removed unused load_hazard)
+    wire lw_stall = (ResultSrcE_in == 2'b01) &&     // Is load
+                    rde_valid &&                      // RdE not x0
+                    (rs1_match_e || rs2_match_e);    // Source match
 
     // =========================================================
     // CONTROL HAZARD DETECTION
@@ -142,3 +134,4 @@ module Hazard_Unit (
 endmodule
 
 `default_nettype wire
+
