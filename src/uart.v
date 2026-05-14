@@ -75,19 +75,16 @@ module uart_Tx_fixed #(
     reg baud_tick_tx;      // TX FSM clock
     reg baud_tick_rx;      // RX FSM clock
     reg baud_tick_ctrl;    // Control/pending logic
-    reg baud_tick_spare;   // Spare/future use
 
     always @(posedge clk) begin
         if (reset) begin
             baud_tick_tx   <= 1'b0;
             baud_tick_rx   <= 1'b0;
             baud_tick_ctrl <= 1'b0;
-            baud_tick_spare<= 1'b0;
         end else begin
             baud_tick_tx   <= baud_tick;
             baud_tick_rx   <= baud_tick;
             baud_tick_ctrl <= baud_tick;
-            baud_tick_spare<= baud_tick;
         end
     end
 
